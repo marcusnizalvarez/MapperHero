@@ -1,0 +1,24 @@
+# MapperHero
+
+The newer Clone Hero MIDI mapping feature works pretty well, but I still missed some features that could improve *my* drumming experience, specially because I'm not using a mainstream E-drum from brands like Yamaha or Roland.
+
+## Features that I missed
+* Assign multiple MIDI notes to a single in-game action/button¹.
+* Assign more than one MIDI device in a single profile².
+* Get statistics from Velocity and Overhit thresholds, such as:
+  - Number of notes ignored by each threshold  
+  - Mean velocity values for each trigger
+  - Other diagnostic metrics useful for calibration³
+
+## Workaround: MapperHero
+![Preview](docs/preview.gif)  
+  
+I created a simple remapping tool that provides these features. Currently, the tool performs MIDI→Keyboard remapping. **As Windows is getting some recent MIDI API significant updates, maybe I'll wait a bit and then implement it as a MIDI→MIDI remapper**, so dynamics stuff will be back.
+
+## Notes
+¹  I was getting a lot of missed notes on the *Snare* because the *Snare Ring* would sometimes trigger instead. Also, I wanted to make some experiences with the Hi-hat pedal that needed multiple remappings, like PedalPressed, OpenHiHat and ClosedHiHat notes.  
+  
+² I'm building more components for my E-drum, like double bass pedal  
+  
+³ I noticed that each Cymbal had different average velocities, and one of them produced lots of Overhit notes from vibration. Without metrics, I had to rely on guesswork and trial-and-error, so having statistics makes calibration much easier.  
+  

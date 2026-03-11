@@ -1,0 +1,28 @@
+# MIDI_NOTE Mappings file;
+# ---------------------------------
+# 38  Snare       | 49  Crash
+# 37  Snare Ring  | 42  Hihat close
+# 50  Tom1        | 46  Hihat open
+# 47  Tom2        | 36  Kick
+# 43  Tom3        | 44  Hihat pedal
+# 51  Ride        |
+# ---------------------------------
+# Example:
+# [MIDI_DEVICE_NAME_1]
+# Note,MappedKey,VelocityThreshold,OverhitTresholdMs
+# Note,MappedKey,VelocityThreshold,OverhitTresholdMs
+# [MIDI_DEVICE_NAME_2]
+# Note,MappedKey,VelocityThreshold,OverhitTresholdMs
+# Note,MappedKey,VelocityThreshold,OverhitTresholdMs
+[TDX-DRUM]
+38,A,10,40
+37,A,10,40
+50,S,10,40
+47,D,10,40
+43,F,10,40
+51,R,15,70
+49,E,10,70
+42,W,10,40
+46,W,10,40
+36, ,10,40
+44, ,10,40
