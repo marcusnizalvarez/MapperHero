@@ -15,7 +15,7 @@ Download the executable [here](https://github.com/marcusnizalvarez/MapperHero/re
 - Tested on Windows 11 x64 25H2
 - Compiled with GCC 13 (MinGW-w64)
 
-## Features that I missed
+## Missing features in CloneHero MIDI mapping system
 * Assign multiple MIDI notes to a single in-game action/button¹.
 * Assign more than one MIDI device in a single profile².
 * Get statistics from Velocity and Overhit thresholds, such as:
