@@ -4,7 +4,7 @@ A MIDI remapping tool for CloneHero game.
 The newer Clone Hero MIDI mapping feature works pretty well, but I still missed some features that could improve *my* drumming experience, specially because I'm not using a mainstream E-drum from brands like Yamaha or Roland.
 
 ## Download
-Download the executable [here]. (https://github.com/marcusnizalvarez/MapperHero/releases/download/v0.1/MapperHero.zip).
+Download the executable [here](https://github.com/marcusnizalvarez/MapperHero/releases/download/v0.1/MapperHero.zip).
 
 - Tested on Windows 11 x64 25H2
 - Compiled with GCC 13 (MinGW-w64)
