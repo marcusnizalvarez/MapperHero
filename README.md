@@ -1,7 +1,13 @@
 # MapperHero
 A MIDI remapping tool for CloneHero game.
 
-The newer Clone Hero MIDI mapping feature works pretty well, but I still missed some features that could improve *my* drumming experience, specially because I'm not using a mainstream E-drum from brands like Yamaha or Roland.
+## Why
+The newer Clone Hero MIDI mapping feature works pretty well, but I still missed some features that could improve *my* drumming experience, especially because I'm not using a mainstream E-drum from brands like Yamaha or Roland.
+
+## Use Cases
+- Combine multiple MIDI notes into a single action
+- Use multiple MIDI devices in one profile (Ex: Kit expansion using Arduino)
+- Diagnose and filter the noisy triggers
 
 ## Download
 Download the executable [here](https://github.com/marcusnizalvarez/MapperHero/releases/download/v0.1/MapperHero.zip).
@@ -23,7 +29,7 @@ Download the executable [here](https://github.com/marcusnizalvarez/MapperHero/re
 I created a simple remapping tool that provides these features. Currently, the tool performs MIDI→Keyboard remapping. **As Windows is getting some recent MIDI API significant updates, maybe I'll wait a bit and then implement it as a MIDI→MIDI remapper**, so dynamics stuff will be back.
 
 ## Notes
-¹  I was getting a lot of missed notes on the *Snare* because the *Snare Ring* would sometimes trigger instead. Also, I wanted to make some experiences with the Hi-hat pedal that needed multiple remappings, like PedalPressed, OpenHiHat and ClosedHiHat notes.  
+¹  I was getting a lot of missed notes on the *Snare* because the *Snare Ring* would sometimes trigger instead. Also, I wanted to make some experiments with the Hi-hat pedal that needed multiple remappings, like PedalPressed, OpenHiHat and ClosedHiHat notes.  
   
 ² I'm building more components for my E-drum, like double bass pedal  
   
