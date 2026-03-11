@@ -1,6 +1,13 @@
 # MapperHero
+A MIDI remapping tool for CloneHero game.
 
 The newer Clone Hero MIDI mapping feature works pretty well, but I still missed some features that could improve *my* drumming experience, specially because I'm not using a mainstream E-drum from brands like Yamaha or Roland.
+
+## Download
+Download the executable [here]. (https://github.com/marcusnizalvarez/MapperHero/releases/download/v0.1/MapperHero.zip).
+
+- Tested on Windows 11 x64 25H2
+- Compiled with GCC 13 (MinGW-w64)
 
 ## Features that I missed
 * Assign multiple MIDI notes to a single in-game action/button¹.
@@ -21,4 +28,8 @@ I created a simple remapping tool that provides these features. Currently, the t
 ² I'm building more components for my E-drum, like double bass pedal  
   
 ³ I noticed that each Cymbal had different average velocities, and one of them produced lots of Overhit notes from vibration. Without metrics, I had to rely on guesswork and trial-and-error, so having statistics makes calibration much easier.  
-  
+
+## How to compile
+```
+x86_64-w64-mingw32-g++ MapperHero.cpp -o MapperHero.exe -static -lwinmm
+```
