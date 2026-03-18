@@ -6,6 +6,7 @@
 #include <iostream>
 #include <iomanip>
 #include <map>
+#include <utility>
 #include <vector>
 #include <fstream>
 #include <sstream>
@@ -18,6 +19,7 @@
 #include <mmsystem.h>
 #include <stdio.h>
 #include <winnt.h>
+#include <winscard.h>
 // NOTE: Code bellow is intended for VisualStudio?
 // #pragma comment(lib,"winmm.lib")
 
@@ -47,6 +49,8 @@ typedef std::map<std::string, NoteMetadataMap> DeviceMappingMap; //<DEVICE_NAME,
 DeviceMappingMap Mappings;
 std::vector<std::string> DeviceNames;
 std::vector<std::string> LogHistory(15,"");
+bool isLoggingEnabled=false;
+std::vector<HMIDIIN> OpenDevices;
 // ---- Special Command Vars
 // TODO: Remove or implement it;
 // bool isHihatPedalPressed=false;
@@ -88,7 +92,7 @@ bool LoadMappings(const std::string &filename) {
             auto it2=line.find_first_of("]");
             if(it1!=std::variant_npos && it2!=std::variant_npos){
                 DeviceName=line.substr(it1 + 1,it2 - it1 - 1);
-                std::cout << "[LOG] Importing mappings for '" << DeviceName << "'\n";
+                std::cout << "[LOG] Importing mappings for " << DeviceName << "\n";
                 continue;
             } else {
                 printf("[LOG] Invalid mappings.txt format\n");
@@ -145,6 +149,7 @@ bool LoadMappings(const std::string &filename) {
 
 // Print Stats Function
 void PrintStats(){
+    if(!isLoggingEnabled) return;
     std::cout << "\033[H";   // Move cursor to top-left (no scrolling)
     for(const auto& xDevice : Mappings){
         std::cout << " " << std::string(57,'_') << " \n";
@@ -191,7 +196,7 @@ void PrintStats(){
 void CALLBACK MidiCallback(HMIDIIN MidiIn,UINT Msg,DWORD_PTR Instance,DWORD_PTR Param1,DWORD_PTR Param2) {
     if(Msg!=MIM_DATA) return;
 
-    std::string DeviceName = *(std::string*)Instance; // Instance is passed as a pointer value, so get it's value
+    //std::string DeviceName = *(std::string*)Instance; // Instance is passed as a pointer value, so get it's value
     unsigned char Status = Param1 & 0xFF;
     unsigned char Note   = (Param1 >> 8) & 0xFF;
     unsigned char Vel    = (Param1 >> 16) & 0xFF;
@@ -204,29 +209,35 @@ void CALLBACK MidiCallback(HMIDIIN MidiIn,UINT Msg,DWORD_PTR Instance,DWORD_PTR 
 
     // Set pointer to KeyMapping
     NoteMetadata* x = nullptr;
-    NoteMetadataMap* NoteMap = &Mappings.at(DeviceName);
+    NoteMetadataMap* NoteMap = &Mappings.at(DeviceNames.at(Instance));
     auto It = NoteMap->find(Note);
     if(It != NoteMap->end()) {
         x = &It->second;
     }
     
     // Log the MIDI note stats
-    std::string LogMsg = "Note=" + std::to_string((int)Note) + " Vel=" + std::to_string((int)Vel);
-    LogHistory.erase(LogHistory.begin());
-    if(x==nullptr){
-        LogMsg+=" !UNMAPPED";
-        LogHistory.push_back(LogMsg);
-        return;
-    } 
-    LogMsg+=" >> " + std::string(1,(char)x->Key);
+    std::string LogMsg;
+    if(isLoggingEnabled){
+        LogMsg = "Note=" + std::to_string((int)Note) + " Vel=" + std::to_string((int)Vel);
+        LogHistory.erase(LogHistory.begin());
+        if(x==nullptr){
+            LogMsg+=" !UNMAPPED";
+            LogHistory.push_back(LogMsg);
+            return;
+        } 
+        LogMsg+=" >> '" + std::string(1,(char)x->Key) + "'";
+    }
     
     // velocity filter
     x->VelocityCumSum+=Vel;
     if(Vel < x->VelocityThreshold) {
         if(Vel > 0){
             x->n_Blocked_byVelocity++;
-            LogMsg+=" !VLCT";
-            LogHistory.push_back(LogMsg);
+            if(isLoggingEnabled){
+                LogMsg+=" !VLCT";
+                LogHistory.push_back(LogMsg);
+            }
+                
         }
         return;
     }
@@ -237,8 +248,10 @@ void CALLBACK MidiCallback(HMIDIIN MidiIn,UINT Msg,DWORD_PTR Instance,DWORD_PTR 
     x->LastHit=Now;
     if(Diff < x->OverhitThreshold){
         x->n_Blocked_byOverhit++;
-        LogMsg+=" !OHIT " + std::to_string(Diff) +"ms";
-        LogHistory.push_back(LogMsg);
+        if(isLoggingEnabled){
+            LogMsg+=" !OHIT " + std::to_string(Diff) +"ms";
+            LogHistory.push_back(LogMsg);
+        }
         return;
     }
 
@@ -252,7 +265,9 @@ void CALLBACK MidiCallback(HMIDIIN MidiIn,UINT Msg,DWORD_PTR Instance,DWORD_PTR 
     x->n_Hits++;
 
     // Print fast log
-    LogHistory.push_back(LogMsg);
+    if(isLoggingEnabled){
+        LogHistory.push_back(LogMsg);
+    }
 }
 
 // --------------------- MAIN ---------------------
@@ -288,7 +303,6 @@ int main() {
         return EXIT_FAILURE;
     }
     
-    std::vector<HMIDIIN> OpenDevices;
     UINT NumDevices = midiInGetNumDevs();
     for(UINT DeviceID = 0; DeviceID < NumDevices; DeviceID++){
         MIDIINCAPS Caps;
@@ -306,14 +320,13 @@ int main() {
         printf("[LOG] Opening mapped device: %s\n",DeviceName.c_str());
         DeviceNames.push_back(DeviceName);
         HMIDIIN MidiDevice;
-        //if(midiInOpen(&MidiDevice,DeviceID,(DWORD_PTR)MidiCallback,0,CALLBACK_FUNCTION) != MMSYSERR_NOERROR){
-        if(midiInOpen(&MidiDevice,DeviceID,(DWORD_PTR)MidiCallback,(DWORD_PTR)&DeviceNames.back(),CALLBACK_FUNCTION) != MMSYSERR_NOERROR){
+        if(midiInOpen(&MidiDevice,DeviceID,(DWORD_PTR)MidiCallback,DeviceNames.size()-1,CALLBACK_FUNCTION) != MMSYSERR_NOERROR){
             printf("[LOG] Failed to open device: %s\n",DeviceName.c_str());
             DeviceName.pop_back();
             continue;
         }
         midiInStart(MidiDevice);
-        OpenDevices.push_back(MidiDevice);
+        OpenDevices.push_back(std::move(MidiDevice));
     }
 
     // Ignore configs for undetected devices
@@ -338,6 +351,7 @@ int main() {
     std::cout << "[LOG] The program is already running...\n";
     std::cout << "PRESS 'ENTER' TO VIEW STATISTICS (OPITIONAL)\n";
     getchar();
+    isLoggingEnabled=true;
     
     // Main loop
     std::cout << "\033[2J";   // Clear Screen
