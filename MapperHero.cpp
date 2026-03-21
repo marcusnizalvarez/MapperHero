@@ -1,72 +1,12 @@
-// --------------------- INCLUDES ---------------------
-// CPP STD libs
-#include <cstddef>
-#include <cstdint>
-#include <cstdlib>
-#include <iostream>
-#include <iomanip>
-#include <map>
-#include <utility>
-#include <vector>
-#include <fstream>
-#include <sstream>
-#include <string>
-#include <chrono>
-#include <variant>
-#include <algorithm>
-// Windows libs
-#include <windows.h>
-#include <mmsystem.h>
-#include <stdio.h>
-#include <winnt.h>
+#include "MapperHero.h"
 #include <winscard.h>
-// NOTE: Code bellow is intended for VisualStudio?
-// #pragma comment(lib,"winmm.lib")
-
-// --------------------- DEFINITIONS ---------------------
-// MIDI STATUS CONSTANTS
-#define MIDI_NOTE_OFF       0x80
-#define MIDI_NOTE_ON        0x90
-#define MIDI_STATUS_MASK    0xF0
-#define MAIN_SLEEP_MS       250
-
-// MIDI_NOTE → {Key, VelocityThreshold, etc...}
-typedef struct {
-    WORD Key;                          // Windows virtual key
-    unsigned char VelocityThreshold;   // Minimum velocity required
-    uint64_t OverhitThreshold;         // Overhit prevention in ms
-                                       // ------------------------
-    uint64_t LastHit;                  // Used for Overhit calculation
-    size_t   n_Hits;                   // Stats
-    size_t   VelocityCumSum;           // Stats
-    size_t   n_Blocked_byVelocity;     // Stats
-    size_t   n_Blocked_byOverhit;      // Stats
-} NoteMetadata;
-typedef std::map<unsigned char, NoteMetadata> NoteMetadataMap;   //<MIDI_NOTE  ,NoteMetadata   >
-typedef std::map<std::string, NoteMetadataMap> DeviceMappingMap; //<DEVICE_NAME,NoteMetadataMap>
 
 // --------------------- VARIABLES ---------------------
-DeviceMappingMap Mappings;
+std::map<std::string, NoteMetadataMap> Mappings;
+std::mutex MappingsMutex;
 std::vector<std::string> DeviceNames;
-std::vector<std::string> LogHistory(15,"");
-bool isLoggingEnabled=false;
-std::vector<HMIDIIN> OpenDevices;
-// ---- Special Command Vars
-// TODO: Remove or implement it;
-// bool isHihatPedalPressed=false;
-// int  SpecialCombinationCounter=0;
-
-// --------------------- FUNCTIONS ---------------------
-uint64_t GetTimeInMs(){
-    auto Now = std::chrono::steady_clock::now();
-    auto Ms = std::chrono::duration_cast<std::chrono::milliseconds>(Now.time_since_epoch());
-    return Ms.count();
-}
-
-// Check if IsValueBetween range
-template<typename T1> bool isValueBetween(const T1& X,const T1& Min,const T1& Max){
-    return (X>=Min && X<=Max);
-}
+std::vector<HMIDIIN> OpenMidiDevices;
+LoggingClass Logging;
 
 // Load mappings parameters from file
 bool LoadMappings(const std::string &filename) {
@@ -80,7 +20,7 @@ bool LoadMappings(const std::string &filename) {
             auto it=line.find_first_of("#");
             if(it!=std::variant_npos){
                 if(it!=0){
-                    printf("[LOG] Invalid mappings.txt format\n");
+                    std::cout << RedText << "[LOG] Invalid mappings.txt format\n" << WhiteText;
                     return false;
                 }
                 continue;
@@ -95,7 +35,7 @@ bool LoadMappings(const std::string &filename) {
                 std::cout << "[LOG] Importing mappings for " << DeviceName << "\n";
                 continue;
             } else {
-                printf("[LOG] Invalid mappings.txt format\n");
+                std::cout << RedText << "[LOG] Invalid mappings.txt format\n" << WhiteText;
                 return false;
             }
         }
@@ -109,39 +49,48 @@ bool LoadMappings(const std::string &filename) {
             std::getline(iss, ohitStr, ',')) {
                 int note = std::stoi(noteStr);
                 if(!isValueBetween(note,0,127)){
-                    std::cout << "[LOG] Invalid parameter in mappings.txt: Note must be between [0,127]'\n";
+                    std::cout << RedText << "[LOG] Invalid parameter in mappings.txt: Note must be between [0,127]'\n" << WhiteText;
                     return false;
                 }
                 char key = keyStr[0];
                 if(keyStr.length()>1){
                     // TODO: special chars in here, like VK_RETURN
-                    std::cout << "[LOG] Invalid parameter in mappings.txt: Key must be single character: a,b,...,z,A,B,...,Z, ,0,1,...,9,@,# '\n";
+                    std::cout << RedText << "[LOG] Invalid parameter in mappings.txt: Key must be single character: a,b,...,z,A,B,...,Z, ,0,1,...,9,@,# '\n" << WhiteText;
                     return false;
                 }
                 int vel = std::stoi(velStr);
                 if(!isValueBetween(vel,0,127)){
-                    std::cout << "[LOG] Invalid parameter in mappings.txt: VelocityThreshold must be between [0,127]'\n";
+                    std::cout << RedText << "[LOG] Invalid parameter in mappings.txt: VelocityThreshold must be between [0,127]'\n" << WhiteText;
                     return false;
                 }
                 int ohit = std::stoi(ohitStr);
                 if(ohit<0 || ohit>999){
                     if(ohit < 0){
-                        std::cout << "[LOG] Invalid parameter in mappings.txt: OverhitThreshold must be greater than 0'\n";
+                        std::cout << RedText << "[LOG] Invalid parameter in mappings.txt: OverhitThreshold must be greater than 0'\n" << WhiteText;
                     } else {
-                        std::cout << "[LOG] Invalid parameter in mappings.txt: OverhitThreshold too high, 1000ms = 1second (are you sure?)'\n";
+                        std::cout << RedText << "[LOG] Invalid parameter in mappings.txt: OverhitThreshold too high, 1000ms = 1second (are you sure?)'\n" << WhiteText;
                     }
                     return false;
                 }
-                Mappings[DeviceName][static_cast<unsigned char>(note)] = {
+                Mappings[DeviceName].try_emplace(
+                    static_cast<MIDI_NOTE_VALUE>(note),
                     static_cast<WORD>(key),
                     static_cast<unsigned char>(vel),
-                    static_cast<uint64_t>(ohit),
-                    GetTimeInMs(),
-                    0,
-                    0,
-                    0,
-                    0
-                };
+                    static_cast<uint64_t>(ohit)
+                );
+                
+                //Mappings[DeviceName].emplace(
+                //    std::piecewise_construct,
+                //    std::forward_as_tuple(static_cast<MIDI_NOTE_VALUE>(note)),
+                //    std::forward_as_tuple(NoteMetadata(static_cast<WORD>(key),static_cast<unsigned char>(vel),static_cast<uint64_t>(ohit)))
+                //);
+                //NoteMetadata x(static_cast<WORD>(key),static_cast<unsigned char>(vel),static_cast<uint64_t>(ohit));
+
+                //Mappings[DeviceName][static_cast<MIDI_NOTE_VALUE>(note)] = {
+                //    static_cast<WORD>(key),
+                //    static_cast<unsigned char>(vel),
+                //    static_cast<uint64_t>(ohit)
+                //};
         }
     }
     return true;
@@ -149,7 +98,6 @@ bool LoadMappings(const std::string &filename) {
 
 // Print Stats Function
 void PrintStats(){
-    if(!isLoggingEnabled) return;
     std::cout << "\033[H";   // Move cursor to top-left (no scrolling)
     for(const auto& xDevice : Mappings){
         std::cout << " " << std::string(57,'_') << " \n";
@@ -157,16 +105,16 @@ void PrintStats(){
         std::cout << "| Mappings            | Hits   | Avg |      Ignored by    |\n";
         std::cout << "| Note>>Key(Vel|OHit) |        | Vel | Velocity | OverHit |\n";
         std::cout << "|_____________________|________|_____|__________|_________|\n";
-        for(const auto& xMapping : xDevice.second){
+        for(const auto& rNoteMetadata : xDevice.second){
             std::cout << 
-             "| "         << std::setw(2) << (unsigned)xMapping.first << 
-            " >> '"        << std::setw(1) << (char)xMapping.second.Key << "'" <<
-            " (" << std::setw(3) << (unsigned)xMapping.second.VelocityThreshold << 
-            "|" << std::setw(3) << xMapping.second.OverhitThreshold << 
-            ") | "  << std::setw(6) << xMapping.second.n_Hits << 
-            " | "   << std::setw(3) << (xMapping.second.n_Hits==0?0:xMapping.second.VelocityCumSum/xMapping.second.n_Hits) << 
-            " | "   << std::setw(8) << xMapping.second.n_Blocked_byVelocity << 
-            " | "   << std::setw(7) << xMapping.second.n_Blocked_byOverhit << 
+             "| "  << std::setw(2) << (unsigned)rNoteMetadata.first << 
+            " >> '"<< std::setw(1) << (char)rNoteMetadata.second.Key << "'" <<
+            " ("   << std::setw(3) << (unsigned)rNoteMetadata.second.VelocityThreshold << 
+            "|"    << std::setw(3) << rNoteMetadata.second.OverhitThreshold << 
+            ") | " << std::setw(6) << rNoteMetadata.second.atomic_NHits.load() << 
+            " | "  << std::setw(3) << (rNoteMetadata.second.atomic_NHits.load()==0?0:rNoteMetadata.second.atomic_VelocityCumSum.load()/rNoteMetadata.second.atomic_NHits.load()) << 
+            " | "  << std::setw(8) << rNoteMetadata.second.atomic_NBlockedByVelocity.load() << 
+            " | "  << std::setw(7) << rNoteMetadata.second.atomic_NBlockedByOverhit.load() << 
             " |\n";
         }
         std::cout << "|_________________________________________________________|\n\n";
@@ -179,12 +127,13 @@ void PrintStats(){
     std::cout << "\033[3;" << TableOffset << "H|   MIDI messages              |";
     std::cout << "\033[4;" << TableOffset << "H|                              |";
     std::cout << "\033[5;" << TableOffset << "H|______________________________|";
-    size_t i=LogHistory.size();
+    
+    size_t i=Logging.HistorySize;
     TableOffset="63";
-    for(const auto& Msg : LogHistory){
+    for(const auto& Msg : Logging.GetHistoryMsgs()){
         std::cout << "\033[" << (i-- +5) << ";" << TableOffset << "H" << std::setfill(' ') << std::setw(35) << std::left << Msg;
     }
-    // std::cout.flush(); No need for fast flush
+    std::cout << std::endl;
 }
 
 // Callback invoked when a MIDI message arrives. bits 0–7 → status; bits 8–15  → data1 (note); bits 16–23 → data2 (velocity)
@@ -196,46 +145,65 @@ void PrintStats(){
 void CALLBACK MidiCallback(HMIDIIN MidiIn,UINT Msg,DWORD_PTR Instance,DWORD_PTR Param1,DWORD_PTR Param2) {
     if(Msg!=MIM_DATA) return;
 
-    //std::string DeviceName = *(std::string*)Instance; // Instance is passed as a pointer value, so get it's value
-    unsigned char Status = Param1 & 0xFF;
-    unsigned char Note   = (Param1 >> 8) & 0xFF;
-    unsigned char Vel    = (Param1 >> 16) & 0xFF;
-    unsigned char Type = Status & MIDI_STATUS_MASK;
+    unsigned char   Status = Param1 & 0xFF;
+    MIDI_NOTE_VALUE Note   = (Param1 >> 8) & 0xFF;
+    unsigned char   Vel    = (Param1 >> 16) & 0xFF;
+    unsigned char   Type = Status & MIDI_STATUS_MASK;
 
     // Do nothing if message is different from (NOTE_ON + Vel>0)
-    if(!(Type==MIDI_NOTE_ON && Vel>0)) {
-        return;
+    if(!(Type==MIDI_NOTE_ON && Vel>0)) return;
+
+    // Seek for DeviceName comparing HMIDIIN to each OpenMidiDevices
+    std::string DeviceName="";
+    for(size_t i=0;i<OpenMidiDevices.size();i++){
+        if(OpenMidiDevices.at(i)==MidiIn){
+            DeviceName=DeviceNames.at(i);
+            break;
+        }
+    }
+    if(DeviceName=="") return;
+    
+    // Set pointer to KeyMapping
+    NoteMetadataMap* NoteMap = &Mappings.at(DeviceName);
+    auto It = NoteMap->find(Note);
+    NoteMetadata* pNoteMetadata = nullptr;
+    if(It != NoteMap->end()) {
+        pNoteMetadata = &It->second;
     }
 
-    // Set pointer to KeyMapping
-    NoteMetadata* x = nullptr;
-    NoteMetadataMap* NoteMap = &Mappings.at(DeviceNames.at(Instance));
-    auto It = NoteMap->find(Note);
-    if(It != NoteMap->end()) {
-        x = &It->second;
+    // Log the MIDI note stats
+    std::string LogMsg = "Note=" + std::to_string((int)Note) + " Vel=" + std::to_string((int)Vel);
+
+    bool tmp_isLogginEnabled=Logging.isLoggingEnabled.load();
+    // -- IF UNMAPPED,
+    if(pNoteMetadata==nullptr){
+        if(tmp_isLogginEnabled){
+            Logging.PushMsgToLogHistory(
+                LogMsg + " !UNMAPPED"
+            );
+        }
+        return;
+    }
+    // -- ELSE, IS MAPPED:
+    if(tmp_isLogginEnabled){
+        LogMsg+=" >> '" + std::string(1,(char)pNoteMetadata->Key) + "'";
     }
     
-    // Log the MIDI note stats
-    std::string LogMsg;
-    if(isLoggingEnabled){
-        LogMsg = "Note=" + std::to_string((int)Note) + " Vel=" + std::to_string((int)Vel);
-        LogHistory.erase(LogHistory.begin());
-        if(x==nullptr){
-            LogMsg+=" !UNMAPPED";
-            LogHistory.push_back(LogMsg);
-            return;
-        } 
-        LogMsg+=" >> '" + std::string(1,(char)x->Key) + "'";
-    }
+    // ---------------- MUTEX LOCKED !!! ----------------
+    //std::lock_guard<std::mutex> Mutex(MappingsMutex);
     
     // velocity filter
-    x->VelocityCumSum+=Vel;
-    if(Vel < x->VelocityThreshold) {
+    if(tmp_isLogginEnabled){
+        //pNoteMetadata->VelocityCumSum+=Vel;
+        pNoteMetadata->atomic_VelocityCumSum.fetch_add(1);
+    }
+    if(Vel < pNoteMetadata->VelocityThreshold) {
         if(Vel > 0){
-            x->n_Blocked_byVelocity++;
-            if(isLoggingEnabled){
+            if(tmp_isLogginEnabled){
+                //pNoteMetadata->n_Blocked_byVelocity++;
+                pNoteMetadata->atomic_NBlockedByVelocity.fetch_add(1);
                 LogMsg+=" !VLCT";
-                LogHistory.push_back(LogMsg);
+                Logging.PushMsgToLogHistory(std::move(LogMsg));
             }
                 
         }
@@ -244,13 +212,14 @@ void CALLBACK MidiCallback(HMIDIIN MidiIn,UINT Msg,DWORD_PTR Instance,DWORD_PTR 
 
     // Overhit filter
     uint64_t Now=GetTimeInMs();
-    uint64_t Diff=(Now - x->LastHit);
-    x->LastHit=Now;
-    if(Diff < x->OverhitThreshold){
-        x->n_Blocked_byOverhit++;
-        if(isLoggingEnabled){
+    uint64_t Diff=(Now - pNoteMetadata->atomic_LastHit);
+    pNoteMetadata->atomic_LastHit=Now;
+    if(Diff < pNoteMetadata->OverhitThreshold){
+        if(tmp_isLogginEnabled){
+            //pNoteMetadata->n_Blocked_byOverhit++;
+            pNoteMetadata->atomic_NBlockedByOverhit.fetch_add(1);
             LogMsg+=" !OHIT " + std::to_string(Diff) +"ms";
-            LogHistory.push_back(LogMsg);
+            Logging.PushMsgToLogHistory(std::move(LogMsg));
         }
         return;
     }
@@ -258,15 +227,16 @@ void CALLBACK MidiCallback(HMIDIIN MidiIn,UINT Msg,DWORD_PTR Instance,DWORD_PTR 
     // Finally, emit keyboard press
     INPUT Input={0};
     Input.type=INPUT_KEYBOARD;
-    Input.ki.wVk=x->Key;
+    Input.ki.wVk=pNoteMetadata->Key;
     SendInput(1,&Input,sizeof(INPUT));
     Input.ki.dwFlags=KEYEVENTF_KEYUP;
     SendInput(1,&Input,sizeof(INPUT));
-    x->n_Hits++;
 
     // Print fast log
-    if(isLoggingEnabled){
-        LogHistory.push_back(LogMsg);
+    if(Logging.isLoggingEnabled){
+        //pNoteMetadata->n_Hits++;
+        pNoteMetadata->atomic_NHits.fetch_add(1);
+        Logging.PushMsgToLogHistory(std::move(LogMsg));
     }
 }
 
@@ -292,41 +262,49 @@ int main() {
             std::cout << "━━━━━━━━━━┗┛┗┛┗┛━━━┛┏━┛┏━┛━━┛┛━┛━┗┛━━┛┛━━━┛━━━━━━━━\n";
             std::cout << "━━━━━━━━━━━━━━━━━━━━┃━━┃━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
             std::cout << "━━━━━━━━━━━━━━━━━━━━┛━━┛━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
-            std::cout << " *** A MIDI remapping tool for CloneHero game. *** \n";
+            std::cout << BlueText << " *** A MIDI remapping tool for CloneHero game. *** \n" << WhiteText;
             std::cout << "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
     }
 
     // Load mappings.txt file
     if (!LoadMappings("mappings.txt")) {
-        printf("[LOG] Failed to open mappings.txt\n");
+        std::cout << RedText << "[LOG] Failed to open mappings.txt\n" << WhiteText;
         getchar();
         return EXIT_FAILURE;
     }
     
+    //std::vector<HMIDIIN> OpenMidiDevices;
+    //std::vector<OpenMidiDevice> OpenMidiDevices;
     UINT NumDevices = midiInGetNumDevs();
     for(UINT DeviceID = 0; DeviceID < NumDevices; DeviceID++){
         MIDIINCAPS Caps;
         if(midiInGetDevCaps(DeviceID,&Caps,sizeof(Caps)) != MMSYSERR_NOERROR)
             continue;
         std::string DeviceName = Caps.szPname;
-        printf("[LOG] Detected MIDI device: %s\n",DeviceName.c_str());
+        std::cout << "[LOG] Detected MIDI device: " << DeviceName << '\n';
         
         // Check if device name exists in mappings
         if(Mappings.find(DeviceName) == Mappings.end()){
-            printf("[LOG] No mappings for %s, skipping\n",DeviceName.c_str());
+            std::cout << YellowText << "[LOG] No mappings for " << DeviceName << ", skipping\n" << WhiteText;
             continue;
         }
-
-        printf("[LOG] Opening mapped device: %s\n",DeviceName.c_str());
-        DeviceNames.push_back(DeviceName);
+        
+        // Open HMIDIIN devices
+        std::cout << GreenText << "[LOG] Opening mapped device: " << DeviceName << '\n' << WhiteText;
         HMIDIIN MidiDevice;
-        if(midiInOpen(&MidiDevice,DeviceID,(DWORD_PTR)MidiCallback,DeviceNames.size()-1,CALLBACK_FUNCTION) != MMSYSERR_NOERROR){
-            printf("[LOG] Failed to open device: %s\n",DeviceName.c_str());
-            DeviceName.pop_back();
+        if(midiInOpen(
+                &MidiDevice,
+                DeviceID,
+                (DWORD_PTR)MidiCallback,
+                0, // WARN: Disabled, I was using: 'DeviceNames.size()-1'
+                CALLBACK_FUNCTION) != MMSYSERR_NOERROR){
+            std::cout << RedText << "[LOG] Failed to open device: " << DeviceName << '\n' << WhiteText;
             continue;
         }
+        DeviceNames.push_back(DeviceName);
         midiInStart(MidiDevice);
-        OpenDevices.push_back(std::move(MidiDevice));
+        OpenMidiDevices.push_back(MidiDevice);
+        //OpenMidiDevices.push_back(OpenMidiDevice{MidiDevice});
     }
 
     // Ignore configs for undetected devices
@@ -335,14 +313,15 @@ int main() {
         for(const auto& x : Mappings){
             if(std::find(DeviceNames.begin(),DeviceNames.end(),x.first)==DeviceNames.end()){
                 UndetectedDevices.push_back(x.first);
-                std::cout<<"[LOG] "<<x.first<<" device not found, ignoring config from mappings.txt\n";
+                std::cout<< YellowText << "[LOG] "<< x.first << " device not found, ignoring config from mappings.txt\n" << WhiteText;
             }
         }
         for(const auto& x : UndetectedDevices) Mappings.erase(x);
     }
     
-    if(OpenDevices.empty()){
-        printf("[LOG] No mapped MIDI devices found\n");
+    // If No Device open, terminate
+    if(OpenMidiDevices.empty()){
+        std::cout << RedText << "[LOG] No mapped MIDI devices found\n" << WhiteText;
         getchar();
         return 0;
     }
@@ -351,7 +330,7 @@ int main() {
     std::cout << "[LOG] The program is already running...\n";
     std::cout << "PRESS 'ENTER' TO VIEW STATISTICS (OPITIONAL)\n";
     getchar();
-    isLoggingEnabled=true;
+    Logging.isLoggingEnabled.store(true);
     
     // Main loop
     std::cout << "\033[2J";   // Clear Screen
@@ -361,12 +340,13 @@ int main() {
         Sleep(MAIN_SLEEP_MS);
     }
     std::cout << "\033[?25h"; // Show cursor
-
+    
     // Cleanup
-    for(HMIDIIN Dev : OpenDevices){
+    for(HMIDIIN Dev : OpenMidiDevices){
         midiInStop(Dev);
         midiInClose(Dev);
     }
+
     getchar();
     return 0;
 }
